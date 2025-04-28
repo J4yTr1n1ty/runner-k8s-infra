@@ -11,6 +11,8 @@ fi
 ORG_NAME=$1
 GITHUB_TOKEN=$2
 
+ORG_NAME=$(echo "$ORG_NAME" | tr '[:upper:]' '[:lower:]')
+
 # Create a temporary file
 TEMP_FILE=$(mktemp)
 
@@ -35,13 +37,13 @@ sed -i "s/YOUR_BASE64_ENCODED_TOKEN/$TOKEN_B64/g" $TEMP_FILE
 # Apply the deployment
 echo "Deploying GitHub Runner for organization: $ORG_NAME"
 # Create namespace if it doesn't exist
-kubectl apply -f github-runners-namespace.yaml
+microk8s kubectl apply -f github-runners-namespace.yaml
 
 # Apply the deployment to the github-runners namespace
-kubectl apply -f $TEMP_FILE -n github-runners
+microk8s kubectl apply -f $TEMP_FILE -n github-runners
 
 # Clean up
 rm $TEMP_FILE
 
 echo "Deployment complete!"
-echo "Check status with: kubectl get pods -l org=$ORG_NAME -n github-runners"
+echo "Check status with: microk8s kubectl get pods -l org=$ORG_NAME -n github-runners"
