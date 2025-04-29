@@ -33,7 +33,7 @@ spec:
                   name: github-runner-token-org-name
                   key: access-token
             - name: LABELS
-              value: "self-hosted,Linux,X64,org-name"
+              value: "self-hosted,Linux,X64,k8s"
           resources:
             limits:
               cpu: "1"
