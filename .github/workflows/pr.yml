@@ -1,0 +1,189 @@
+name: Pull Request
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  GO_VERSION: "1.24.3"
+
+jobs:
+  validate:
+    name: Validate PR
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        # Fetch full history for better diff analysis
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Validate commit messages
+      run: |
+        # Check if commit messages follow conventional commits
+        git log --format="%s" origin/main..HEAD | while read -r commit_msg; do
+          if ! echo "$commit_msg" | grep -qE "^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?: .+"; then
+            echo "❌ Invalid commit message format: $commit_msg"
+            echo "Please use conventional commits format: type(scope): description"
+            exit 1
+          else
+            echo "✅ Valid commit message: $commit_msg"
+          fi
+        done
+
+    - name: Check for breaking changes
+      run: |
+        # Look for potential breaking changes in Go files
+        if git diff origin/main..HEAD --name-only | grep -E "\.(go)$" | xargs -I {} git diff origin/main..HEAD -- {} | grep -E "^-.*func.*\(|^-.*type.*struct|^-.*interface"; then
+          echo "⚠️  Potential breaking changes detected. Please ensure backward compatibility or update version appropriately."
+        else
+          echo "✅ No obvious breaking changes detected"
+        fi
+
+    - name: Run tests with race detection
+      run: go test -v -race ./...
+
+    - name: Check test coverage
+      run: |
+        go test -coverprofile=coverage.out ./...
+        COVERAGE=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}' | sed 's/%//')
+        echo "Test coverage: ${COVERAGE}%"
+        
+        # Fail if coverage is below threshold
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "❌ Test coverage is below 80%: ${COVERAGE}%"
+          exit 1
+        else
+          echo "✅ Test coverage is acceptable: ${COVERAGE}%"
+        fi
+
+    - name: Validate Kubernetes manifests
+      run: |
+        # Check if Kubernetes manifests are valid
+        if [ -d "deploy" ]; then
+          for file in deploy/*.yaml; do
+            if kubectl --dry-run=client apply -f "$file" > /dev/null 2>&1; then
+              echo "✅ Valid manifest: $file"
+            else
+              echo "❌ Invalid manifest: $file"
+              kubectl --dry-run=client apply -f "$file"
+              exit 1
+            fi
+          done
+        fi
+
+    - name: Check documentation
+      run: |
+        # Ensure README is updated if significant changes are made
+        if git diff origin/main..HEAD --name-only | grep -qE "\.(go)$"; then
+          if ! git diff origin/main..HEAD --name-only | grep -q "README.md"; then
+            echo "⚠️  Go files changed but README.md not updated. Consider updating documentation."
+          else
+            echo "✅ Documentation appears to be updated"
+          fi
+        fi
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Set up Kind (Kubernetes in Docker)
+      uses: helm/kind-action@v1
+      with:
+        cluster_name: test-cluster
+        wait: 30s
+
+    - name: Test Kubernetes deployment
+      run: |
+        # Build the deploy-runner binary
+        go build -o deploy-runner ./cmd/deploy-runner
+        
+        # Apply namespace
+        kubectl apply -f deploy/namespace.yaml
+        
+        # Create a test secret (using fake token for testing)
+        kubectl create secret generic test-token --from-literal=token=fake-token -n github-runners
+        
+        # Test that manifests can be applied (will fail due to fake token, but validates YAML structure)
+        echo "Testing manifest structure..."
+        
+        # Replace template variables manually for testing
+        sed 's/{{ORG_NAME}}/test-org/g; s/{{ACCESS_TOKEN_B64}}/ZmFrZS10b2tlbg==/g' deploy/runner-deployment-template.yaml > test-deployment.yaml
+        
+        # Apply the test deployment
+        kubectl apply -f test-deployment.yaml --dry-run=client
+        
+        echo "✅ Kubernetes integration test passed"
+
+  auto-merge:
+    name: Auto-merge dependabot PRs
+    runs-on: ubuntu-latest
+    needs: [validate, integration]
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.draft == false
+    
+    steps:
+    - name: Enable auto-merge for Dependabot PRs
+      run: gh pr merge --auto --merge "$PR_URL"
+      env:
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  size-check:
+    name: Binary Size Check
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Build binaries and check size
+      run: |
+        # Build both binaries
+        go build -ldflags="-w -s" -o controller ./cmd/controller
+        go build -ldflags="-w -s" -o deploy-runner ./cmd/deploy-runner
+        
+        # Check binary sizes
+        controller_size=$(stat -c%s controller)
+        deploy_runner_size=$(stat -c%s deploy-runner)
+        
+        echo "Controller binary size: $(numfmt --to=iec $controller_size)"
+        echo "Deploy-runner binary size: $(numfmt --to=iec $deploy_runner_size)"
+        
+        # Warn if binaries are getting too large (>50MB)
+        if [ $controller_size -gt 52428800 ]; then
+          echo "⚠️  Controller binary is quite large: $(numfmt --to=iec $controller_size)"
+        fi
+        
+        if [ $deploy_runner_size -gt 52428800 ]; then
+          echo "⚠️  Deploy-runner binary is quite large: $(numfmt --to=iec $deploy_runner_size)"
+        fi

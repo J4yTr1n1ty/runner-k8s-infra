@@ -1,0 +1,246 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  GO_VERSION: "1.24.3"
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    name: Pre-release Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build binaries
+      run: make build
+
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: write
+      packages: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build cross-platform binaries
+      run: |
+        mkdir -p dist
+        
+        # Build for different platforms
+        platforms=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64")
+        
+        for platform in "${platforms[@]}"; do
+          GOOS=${platform%/*}
+          GOARCH=${platform#*/}
+          
+          echo "Building for $GOOS/$GOARCH..."
+          
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then
+            EXT=".exe"
+          fi
+          
+          # Build controller
+          env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build \
+            -ldflags="-w -s -X main.version=${{ steps.version.outputs.version }}" \
+            -o dist/controller-$GOOS-$GOARCH$EXT \
+            ./cmd/controller
+          
+          # Build deploy-runner  
+          env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build \
+            -ldflags="-w -s -X main.version=${{ steps.version.outputs.version }}" \
+            -o dist/deploy-runner-$GOOS-$GOARCH$EXT \
+            ./cmd/deploy-runner
+          
+          # Create platform-specific archive
+          if [ "$GOOS" = "windows" ]; then
+            zip -j dist/runner-k8s-infra-${{ steps.version.outputs.version }}-$GOOS-$GOARCH.zip \
+              dist/controller-$GOOS-$GOARCH$EXT \
+              dist/deploy-runner-$GOOS-$GOARCH$EXT \
+              bin/deploy-runner.sh \
+              README.md
+          else
+            tar -czf dist/runner-k8s-infra-${{ steps.version.outputs.version }}-$GOOS-$GOARCH.tar.gz \
+              -C dist controller-$GOOS-$GOARCH$EXT deploy-runner-$GOOS-$GOARCH$EXT \
+              -C ../bin deploy-runner.sh \
+              -C .. README.md
+          fi
+        done
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Simple changelog generation from git commits
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "changelog=Manual release of ${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          # Get commits since last tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            git log --pretty=format:"- %s" $PREVIOUS_TAG..HEAD >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+    - name: Create Release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ steps.version.outputs.version }}
+        name: Release ${{ steps.version.outputs.version }}
+        body: |
+          ## Changes
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ## Installation
+          
+          Download the appropriate binary for your platform from the assets below.
+          
+          ### Quick Start
+          ```bash
+          # Extract the archive
+          tar -xzf runner-k8s-infra-${{ steps.version.outputs.version }}-linux-amd64.tar.gz
+          
+          # Make binaries executable
+          chmod +x controller-linux-amd64 deploy-runner-linux-amd64 deploy-runner.sh
+          
+          # Deploy a runner
+          export GITHUB_TOKEN=your_token_here
+          ./deploy-runner.sh myorg
+          ```
+          
+          See the README.md for full documentation.
+        artifacts: "dist/*.tar.gz,dist/*.zip"
+        draft: false
+        prerelease: false
+
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Extract metadata for controller
+      id: meta-controller
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/controller
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+
+    - name: Build and push controller image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.controller
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta-controller.outputs.tags }}
+        labels: ${{ steps.meta-controller.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.version.outputs.version }}
+
+    - name: Extract metadata for deploy-runner
+      id: meta-deploy-runner
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/deploy-runner
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr  
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+
+    - name: Build and push deploy-runner image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.deploy-runner
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta-deploy-runner.outputs.tags }}
+        labels: ${{ steps.meta-deploy-runner.outputs.labels }}
+        build-args: |
+          VERSION=${{ steps.version.outputs.version }}

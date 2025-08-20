@@ -1,0 +1,54 @@
+# Build stage
+FROM golang:1.24.3-alpine AS builder
+
+# Install git and ca-certificates
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build args
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+# Build the deploy-runner
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-w -s -X main.version=${VERSION}" \
+    -o deploy-runner \
+    ./cmd/deploy-runner
+
+# Runtime stage
+FROM alpine:3.19
+
+# Install kubectl and bash
+RUN apk add --no-cache ca-certificates kubectl bash curl
+
+# Copy the binary
+COPY --from=builder /app/deploy-runner /usr/local/bin/deploy-runner
+
+# Copy deployment templates
+COPY --from=builder /app/deploy /deploy
+
+# Copy bash script
+COPY --from=builder /app/bin/deploy-runner.sh /usr/local/bin/deploy-runner.sh
+
+# Make scripts executable
+RUN chmod +x /usr/local/bin/deploy-runner /usr/local/bin/deploy-runner.sh
+
+# Create non-root user
+RUN adduser -D -s /bin/bash runner
+USER runner
+
+WORKDIR /home/runner
+
+ENTRYPOINT ["/usr/local/bin/deploy-runner"]
