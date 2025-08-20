@@ -1,119 +1,279 @@
-# GitHub Actions Runners on Kubernetes (microk8s)
+# GitHub Actions Runners on Kubernetes
 
-A simple approach to deploying GitHub Actions runners on Kubernetes (microk8s) for multiple organizations.
+A sophisticated solution for deploying and auto-scaling self-hosted GitHub Actions runners on Kubernetes. This project provides both manual deployment tools and an intelligent controller that automatically scales runners based on workflow demand.
 
-## Overview
+## Features
 
-This repository contains Kubernetes manifests for deploying self-hosted GitHub Actions runners. It addresses the limitation that GitHub Actions runners cannot be shared between organizations by deploying separate runners for each organization.
+- **Automated Scaling**: Intelligent controller that monitors GitHub workflow queues and scales runners automatically
+- **Multi-Organization Support**: Deploy runners for multiple GitHub organizations or personal repositories
+- **Manual Deployment**: Simple script and CLI tools for manual runner deployment
+- **Template-Based Configuration**: Flexible deployment templates for customization
+- **Graceful Scaling**: Smart scale-down logic to prevent unnecessary churn
 
-## Prerequisites
+## Architecture
 
-- A Kubernetes cluster (microk8s) up and running
+The project consists of three main components:
+
+1. **Controller** (`cmd/controller`): Monitors GitHub workflows and automatically scales runners
+2. **Deploy Runner CLI** (`cmd/deploy-runner`): Command-line tool for manual runner deployment
+3. **Deploy Script** (`bin/deploy-runner.sh`): Bash script for quick manual deployments
+
+## Quick Start
+
+### Prerequisites
+
+- Kubernetes cluster (tested with microk8s)
 - `kubectl` configured to access your cluster
-- GitHub personal access tokens for each organization (with `admin:org` scope)
-- Docker installed on your Kubernetes nodes
+- GitHub personal access tokens with `admin:org` scope for each organization
+- Go 1.24+ (for building from source)
 
-## Setup Instructions
+### Option 1: Manual Deployment (Quick Setup)
 
-### 1. Clone the Repository
+For simple manual deployment of runners:
 
 ```bash
+# Clone and setup
 git clone https://github.com/J4yTr1n1ty/runner-k8s-infra.git
 cd runner-k8s-infra
+
+# Create namespace
+kubectl apply -f deploy/namespace.yaml
+
+# Deploy a runner for an organization
+export GITHUB_TOKEN=your_github_token_here
+./bin/deploy-runner.sh myorg
 ```
 
-### 2. Make the Deployment Script Executable
+### Option 2: Automated Controller (Production Setup)
+
+For automatic scaling based on workflow demand:
 
 ```bash
-chmod +x deploy-runner.sh
+# 1. Configure the controller
+cp config/config.yaml config/my-config.yaml
+# Edit my-config.yaml with your settings
+
+# 2. Build the controller
+make build-controller
+
+# 3. Create namespace and apply configuration
+kubectl apply -f deploy/namespace.yaml
+kubectl create secret generic github-token --from-literal=token=$GITHUB_TOKEN -n github-runners
+
+# 4. Run the controller
+./bin/controller -config config/my-config.yaml
 ```
 
-### 3. Deploy a Runner for an Organization
+## Configuration
 
-To deploy a runner for a specific GitHub organization:
+### Controller Configuration
+
+Create a `config.yaml` file based on the template in `config/config.yaml`:
+
+```yaml
+github:
+  token: ""  # Set via GITHUB_TOKEN env var
+  organizations: 
+    - "myorg1"
+    - "myorg2"
+  personalRepos: 
+    - "user/repo1"
+    - "user/repo2"
+  
+kubernetes:
+  namespace: "github-runners"
+  
+controller:
+  pollInterval: "30s"
+  minRunners: 0
+  maxRunners: 10
+  scaleDownDelay: "5m"
+  runnersPerJob: 1.2
+```
+
+### Environment Variables
+
+- `GITHUB_TOKEN`: GitHub personal access token (required)
+- `KUBECONFIG`: Path to kubeconfig file (optional, uses in-cluster config if not set)
+
+## Usage Examples
+
+### Deploy a single runner manually
+
+Using the CLI tool:
+```bash
+./bin/deploy-runner -org myorg -replicas 2
+```
+
+Using the bash script:
+```bash
+./bin/deploy-runner.sh myorg
+```
+
+### Scale existing deployment
 
 ```bash
-./deploy-runner.sh <org-name> <github-token>
+kubectl scale deployment github-runner-myorg --replicas=5 -n github-runners
 ```
 
-Example:
+### Check runner status
 
 ```bash
-./deploy-runner.sh myorg ghp_1234567890abcdef
+# Check pods
+kubectl get pods -l app=github-runner -n github-runners
+
+# Check deployments
+kubectl get deployments -n github-runners
+
+# Check logs
+kubectl logs -l org=myorg -n github-runners
 ```
 
-This will:
-
-- Create a Kubernetes deployment for the GitHub runner
-- Create a secret with your GitHub token
-- Configure the runner to register with your organization
-
-### 4. Verify the Deployment
-
-Check that the runner pod is running:
+### Remove runners
 
 ```bash
-kubectl get pods -l app=github-runner
+kubectl delete deployment github-runner-myorg -n github-runners
+kubectl delete secret github-runner-token-myorg -n github-runners
 ```
 
-You should also see the runner appear in your GitHub organization's settings under "Actions > Runners".
-
-## Manually Scaling Runners
-
-To scale the number of runners for an organization:
+## Building from Source
 
 ```bash
-kubectl scale deployment github-runner-<org-name> --replicas=<number>
+# Install dependencies
+make install-deps
+
+# Build all components
+make build
+
+# Build individual components
+make build-controller
+make build-deploy-runner
+
+# Run tests
+make test
+
+# Format and vet code
+make fmt vet
 ```
 
-Example:
+## How It Works
+
+### Controller Logic
+
+1. **Polling**: Regularly queries GitHub API for pending workflow runs
+2. **Calculation**: Determines required runners using configurable ratios
+3. **Scaling**: Creates/updates Kubernetes deployments as needed
+4. **Protection**: Implements delays and limits to prevent thrashing
+
+### Runner Configuration
+
+Each runner deployment includes:
+- Automatic GitHub registration/deregistration
+- Custom labels for workflow targeting
+- Resource limits and requests
+- Docker socket access for containerized workflows
+- Persistent work directories
+
+### Deployment Template
+
+The deployment template (`deploy/runner-deployment-template.yaml`) supports:
+- Organization name substitution (`{{ORG_NAME}}`)
+- Base64 token substitution (`{{ACCESS_TOKEN_B64}}`)
+- Customizable resource limits
+- Configurable labels and environment variables
+
+## Monitoring and Troubleshooting
+
+### Check Controller Status
 
 ```bash
-kubectl scale deployment github-runner-myorg --replicas=3
+# View controller logs
+kubectl logs -l app=runner-controller -n github-runners
+
+# Check controller configuration
+kubectl get configmap controller-config -n github-runners -o yaml
 ```
 
-## Stopping Runners
-
-To stop runners for an organization:
+### Debug Runner Issues
 
 ```bash
-kubectl scale deployment github-runner-<org-name> --replicas=0
+# Check runner pod status
+kubectl describe pods -l app=github-runner -n github-runners
+
+# View runner logs
+kubectl logs -l org=myorg -n github-runners --tail=100
+
+# Check GitHub registration status
+kubectl exec -it $(kubectl get pods -l org=myorg -n github-runners -o jsonpath='{.items[0].metadata.name}') -- cat /home/runner/.runner
 ```
 
-Or to completely remove the deployment:
+### Common Issues
+
+1. **Runners not appearing in GitHub**: Check token permissions and network connectivity
+2. **Pods stuck in Pending**: Check resource availability and node selectors  
+3. **Scale events not working**: Verify GitHub API rate limits and webhook configuration
+
+## Advanced Configuration
+
+### Custom Runner Images
+
+Modify the deployment template to use custom runner images:
+
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: github-runner
+          image: my-custom-runner:latest
+```
+
+### Multiple Runner Pools
+
+Deploy different configurations for different use cases:
 
 ```bash
-kubectl delete deployment github-runner-<org-name>
-kubectl delete secret github-runner-token-<org-name>
+# CPU-intensive workloads
+./bin/deploy-runner -org myorg-cpu -template deploy/cpu-intensive-template.yaml
+
+# GPU workloads  
+./bin/deploy-runner -org myorg-gpu -template deploy/gpu-template.yaml
 ```
 
-## Understanding the Runner Configuration
+### Resource Quotas
 
-The GitHub runner deployment uses the [myoung34/github-runner](https://github.com/myoung34/docker-github-actions-runner) container image which:
+Apply resource quotas to prevent runaway scaling:
 
-1. Automatically registers with GitHub when started
-2. Automatically de-registers when stopped
-3. Uses the provided GitHub token for authentication
-4. Applies custom labels for targeting workflows to this runner
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: github-runners-quota
+  namespace: github-runners
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40" 
+    limits.memory: 80Gi
+```
 
-## Troubleshooting
+## Security Considerations
 
-If the runners aren't appearing in GitHub:
+- Store GitHub tokens in Kubernetes secrets, not config files
+- Use least-privilege service accounts for controllers
+- Regularly rotate GitHub tokens
+- Monitor resource usage to prevent abuse
+- Consider network policies to restrict runner access
 
-1. Check the pod logs:
+## Contributing
 
-   ```bash
-   kubectl logs -l app=github-runner,org=<org-name>
-   ```
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Run `make test fmt vet`
+5. Submit a pull request
 
-2. Verify your GitHub token has the correct permissions
+## License
 
-3. Check if the pod can connect to GitHub's servers
-
-## Next Steps
-
-For a more sophisticated solution, consider:
-
-1. Creating a controller to automatically scale runners based on workflow demand
-2. Setting up runner pools with different resource configurations
-3. Adding monitoring and alerting for runner health
+This project is licensed under the MIT License - see the LICENSE file for details.
