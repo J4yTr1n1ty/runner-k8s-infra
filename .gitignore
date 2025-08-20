@@ -1,0 +1,43 @@
+# Binaries
+/bin/controller
+/bin/deploy-runner
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local configuration files
+config/local-config.yaml
+config/my-config.yaml
+*.local.yaml
+
+# Kubernetes secrets
+*.kubeconfig
+
+# Temporary files
+*.tmp
+*.temp

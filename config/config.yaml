@@ -1,0 +1,20 @@
+github:
+  token: ""  # Will be read from GITHUB_TOKEN environment variable if not specified
+  organizations: []  # List of GitHub organizations to monitor
+  personalRepos: []  # List of personal repositories in format "owner/repo"
+  
+kubernetes:
+  kubeconfig: ""  # Path to kubeconfig file, leave empty for in-cluster config
+  namespace: "github-runners"
+  deploymentPrefix: "github-runner-"
+  
+controller:
+  pollInterval: "30s"  # How often to check GitHub API for pending workflows
+  minRunners: 0        # Minimum number of runners per organization
+  maxRunners: 10       # Maximum number of runners per organization
+  scaleDownDelay: "5m" # Wait time before scaling down after scaling up
+  scaleDownInterval: "1m" # Minimum time between scale down operations
+  runnersPerJob: 1.2   # Overprovisioning factor
+
+deployment:
+  templatePath: "deploy/runner-deployment-template.yaml"
