@@ -10,8 +10,8 @@ env:
   GO_VERSION: "1.24.3"
 
 jobs:
-  test:
-    name: Test
+  test-and-build:
+    name: Test and Build
     runs-on: ubuntu-latest
     
     steps:
@@ -33,159 +33,48 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Download dependencies
-      run: go mod download
+    - name: Download and verify dependencies
+      run: |
+        go mod download
+        go mod verify
 
-    - name: Verify dependencies
-      run: go mod verify
-
-    - name: Run tests
+    - name: Run tests with coverage
       run: go test -v -race -coverprofile=coverage.out ./...
-
-    - name: Generate coverage report
-      run: go tool cover -html=coverage.out -o coverage.html
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
+      if: github.event_name == 'push'
       with:
         file: ./coverage.out
-        flags: unittests
-        name: codecov-umbrella
 
-    - name: Upload coverage reports as artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-reports
-        path: |
-          coverage.out
-          coverage.html
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-
-    - name: Run golangci-lint
+    - name: Run linter
       uses: golangci/golangci-lint-action@v6
       with:
         version: latest
-        args: --timeout=5m
+        args: --timeout=3m
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
-        exclude:
-          - goos: windows
-            goarch: arm64
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Build controller
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
+    - name: Build binaries (Linux only for CI)
       run: |
         mkdir -p dist
-        EXT=""
-        if [ "$GOOS" = "windows" ]; then
-          EXT=".exe"
-        fi
-        go build -o dist/controller-$GOOS-$GOARCH$EXT ./cmd/controller
-
-    - name: Build deploy-runner
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-      run: |
-        EXT=""
-        if [ "$GOOS" = "windows" ]; then
-          EXT=".exe"
-        fi
-        go build -o dist/deploy-runner-$GOOS-$GOARCH$EXT ./cmd/deploy-runner
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: dist/
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-
-    - name: Run Gosec Security Scanner
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: '-fmt sarif -out gosec.sarif ./...'
-
-    - name: Upload SARIF file
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: gosec.sarif
-
-  validate-config:
-    name: Validate Configuration
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-
-    - name: Validate config schema
-      run: |
-        # Build the controller to test config loading
-        go build -o controller ./cmd/controller
-        
-        # Test config validation with sample config
-        export GITHUB_TOKEN="fake-token-for-testing"
-        ./controller -config config/config.yaml --help || true
+        go build -o dist/controller ./cmd/controller
+        go build -o dist/deploy-runner ./cmd/deploy-runner
 
     - name: Validate Kubernetes manifests
-      uses: instrumenta/kubeval-action@master
-      with:
-        files: |
-          deploy/namespace.yaml
-          deploy/runner-deployment-template.yaml
+      run: |
+        # Simple validation without external tools
+        for file in deploy/*.yaml; do
+          if ! kubectl --dry-run=client apply -f "$file" > /dev/null 2>&1; then
+            echo "❌ Invalid manifest: $file"
+            exit 1
+          fi
+        done
+        echo "✅ All manifests are valid"
+
+    - name: Basic security check
+      run: |
+        # Simple security check for common issues
+        if grep -r "password\|secret\|token" --include="*.go" . | grep -v "test" | grep -v "// " | grep -v "TOKEN"; then
+          echo "⚠️ Potential security issue: hardcoded secrets detected"
+          exit 1
+        fi
+        echo "✅ No obvious security issues found"

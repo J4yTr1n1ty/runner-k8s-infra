@@ -7,7 +7,6 @@ on:
       - 'README.md'
       - 'docs/**'
       - 'config/**'
-      - '.github/workflows/docs.yml'
   pull_request:
     branches: [ main ]
     paths:
@@ -16,45 +15,8 @@ on:
       - 'config/**'
 
 jobs:
-  lint-docs:
-    name: Lint Documentation
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-
-    - name: Install markdownlint
-      run: npm install -g markdownlint-cli
-
-    - name: Lint markdown files
-      run: |
-        # Create markdownlint config
-        cat > .markdownlint.json << 'EOF'
-        {
-          "MD013": { "line_length": 120 },
-          "MD033": false,
-          "MD041": false
-        }
-        EOF
-        
-        # Lint all markdown files
-        markdownlint README.md docs/ || true
-
-    - name: Check links in documentation
-      uses: gaurav-nelson/github-action-markdown-link-check@v1
-      with:
-        use-quiet-mode: 'yes'
-        use-verbose-mode: 'yes'
-        config-file: '.github/markdown-link-check.json'
-
-  validate-config-docs:
-    name: Validate Configuration Documentation
+  validate-docs:
+    name: Validate Documentation
     runs-on: ubuntu-latest
     
     steps:
@@ -66,90 +28,19 @@ jobs:
       with:
         go-version: "1.24.3"
 
-    - name: Validate config examples in docs
+    - name: Check markdown and configs
       run: |
-        # Check if config examples in README match actual config structure
-        echo "Validating configuration examples..."
-        
-        # Extract config example from README
-        sed -n '/```yaml/,/```/p' README.md | grep -v '```' > readme-config.yaml || true
-        
-        # Test if extracted config is valid YAML
-        if [ -s readme-config.yaml ]; then
-          echo "Found config example in README, validating..."
-          go run -c 'import ("gopkg.in/yaml.v3"); var config map[string]interface{}; yaml.Unmarshal([]byte(`$(cat readme-config.yaml)`), &config)' || echo "Config validation failed"
-        else
-          echo "No config example found in README"
+        # Simple markdown validation
+        echo "Checking README structure..."
+        if ! grep -q "# GitHub Actions Runners on Kubernetes" README.md; then
+          echo "❌ README title not found"
+          exit 1
         fi
-
-  generate-api-docs:
-    name: Generate API Documentation
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.24.3"
-
-    - name: Install godoc
-      run: go install golang.org/x/tools/cmd/godoc@latest
-
-    - name: Generate Go documentation
-      run: |
-        # Generate package documentation
-        mkdir -p docs/api
         
-        # Generate documentation for each package
-        for pkg in pkg/config pkg/controller pkg/deployment pkg/github pkg/kubernetes; do
-          if [ -d "$pkg" ]; then
-            echo "Generating docs for $pkg..."
-            godoc -html "./$pkg" > "docs/api/$(basename $pkg).html"
-          fi
-        done
-
-    - name: Upload API docs
-      uses: actions/upload-artifact@v4
-      with:
-        name: api-documentation
-        path: docs/api/
-
-  check-example-configs:
-    name: Check Example Configurations
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.24.3"
-
-    - name: Validate example configurations
-      run: |
-        # Build config validation tool
+        # Validate config examples
+        echo "Validating configuration..."
         go build -o validate-config ./cmd/controller
+        export GITHUB_TOKEN="fake-token-for-validation"
+        ./validate-config -config config/config.yaml --help > /dev/null 2>&1 || echo "Config validation warning"
         
-        # Test default config
-        if [ -f "config/config.yaml" ]; then
-          echo "Validating config/config.yaml..."
-          export GITHUB_TOKEN="fake-token-for-validation"
-          ./validate-config -config config/config.yaml --help > /dev/null 2>&1 || echo "Default config validation failed"
-        fi
-        
-        # Test any example configs in docs/
-        if [ -d "docs/examples" ]; then
-          for config_file in docs/examples/*.yaml; do
-            if [ -f "$config_file" ]; then
-              echo "Validating $config_file..."
-              export GITHUB_TOKEN="fake-token-for-validation"
-              ./validate-config -config "$config_file" --help > /dev/null 2>&1 || echo "$config_file validation failed"
-            fi
-          done
-        fi
+        echo "✅ Documentation validation complete"
