@@ -1,6 +1,7 @@
 # Binaries
 /bin/controller
 /bin/deploy-runner
+/dist/
 *.exe
 *.exe~
 *.dll
