@@ -4,10 +4,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-github/v57/github"
-	"k8s.io/client-go/kubernetes"
 	"github.com/J4yTr1n1ty/runner-k8s-infra/pkg/config"
 	"github.com/J4yTr1n1ty/runner-k8s-infra/pkg/deployment"
+	"github.com/google/go-github/v57/github"
+	"k8s.io/client-go/kubernetes"
 )
 
 // RunnerStatus tracks the status of runners for an organization/repo

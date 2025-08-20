@@ -224,7 +224,7 @@ func (c *Controller) calculateDesiredReplicas(status *RunnerStatus) int32 {
 	if desiredReplicas < status.CurrentReplicas {
 		scaleDownDelay, _ := c.config.GetScaleDownDelay()
 		scaleDownInterval, _ := c.config.GetScaleDownInterval()
-		
+
 		timeSinceScaleUp := time.Since(status.LastScaleUp)
 		if timeSinceScaleUp < scaleDownDelay {
 			// Too soon to scale down after a scale up

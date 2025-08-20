@@ -12,6 +12,7 @@ func TestNewClient(t *testing.T) {
 	client := NewClient("test-token")
 	if client == nil {
 		t.Error("Expected client to be created")
+		return
 	}
 	if client.Client == nil {
 		t.Error("Expected GitHub client to be initialized")
@@ -40,7 +41,9 @@ func TestGetPendingWorkflowsForRepo(t *testing.T) {
 			}`
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(response))
+			if _, err := w.Write([]byte(response)); err != nil {
+				t.Errorf("Failed to write response: %v", err)
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -72,7 +75,7 @@ func TestGetPendingWorkflowsForRepoWithRepo(t *testing.T) {
 
 	// This will fail due to authentication, but we can test the logic path
 	_, err := client.GetPendingWorkflows(ctx, "owner", "repo")
-	
+
 	// We expect an error due to invalid token, but this tests the code path
 	if err == nil {
 		t.Log("Note: This test requires valid GitHub credentials to pass fully")
@@ -86,7 +89,7 @@ func TestGetPendingWorkflowsForOrg(t *testing.T) {
 
 	// This will fail due to authentication, but we can test the logic path
 	_, err := client.GetPendingWorkflows(ctx, "orgname", "")
-	
+
 	// We expect an error due to invalid token, but this tests the code path
 	if err == nil {
 		t.Log("Note: This test requires valid GitHub credentials to pass fully")
@@ -120,11 +123,11 @@ func TestGetPendingWorkflowsRouting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			
+
 			// We can't test the actual API call without valid credentials,
 			// but we can verify the function doesn't panic and follows the right path
 			_, err := client.GetPendingWorkflows(ctx, tt.owner, tt.repo)
-			
+
 			// We expect authentication errors with fake token
 			if err != nil && tt.expected == "repo" {
 				// Should have tried the repo path

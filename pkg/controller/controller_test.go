@@ -28,7 +28,7 @@ func TestNewController(t *testing.T) {
 
 	// Create a temporary template file for the test
 	// Note: In a real test environment, you'd create this file
-	
+
 	// For now, let's test the error case when template doesn't exist
 	_, err := NewController(cfg)
 	if err == nil {
@@ -52,8 +52,8 @@ func TestCalculateDesiredReplicas(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		status         *RunnerStatus
+		name             string
+		status           *RunnerStatus
 		expectedReplicas int32
 	}{
 		{
@@ -190,8 +190,8 @@ func TestScaleDownProtection(t *testing.T) {
 
 	// Test recent scale up protection
 	status := &RunnerStatus{
-		PendingJobs:     0,  // Want to scale down
-		CurrentReplicas: 5,  // Currently have 5
+		PendingJobs:     0,                                // Want to scale down
+		CurrentReplicas: 5,                                // Currently have 5
 		LastScaleUp:     time.Now().Add(-2 * time.Minute), // Scaled up 2 minutes ago
 	}
 
@@ -202,7 +202,7 @@ func TestScaleDownProtection(t *testing.T) {
 	}
 
 	// Test old scale up, should allow scale down
-	status.LastScaleUp = time.Now().Add(-10 * time.Minute) // 10 minutes ago
+	status.LastScaleUp = time.Now().Add(-10 * time.Minute)  // 10 minutes ago
 	status.LastScaleDown = time.Now().Add(-2 * time.Minute) // Last scale down 2 minutes ago
 
 	result = controller.calculateDesiredReplicas(status)

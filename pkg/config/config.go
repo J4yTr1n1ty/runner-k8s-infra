@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"time"
@@ -55,7 +54,7 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 	}
 
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
@@ -138,13 +137,13 @@ func (c *Config) GetAbsoluteTemplatePath() (string, error) {
 	if filepath.IsAbs(c.Deployment.TemplatePath) {
 		return c.Deployment.TemplatePath, nil
 	}
-	
+
 	// Make relative to current working directory
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
-	
+
 	return filepath.Join(wd, c.Deployment.TemplatePath), nil
 }
 
@@ -152,7 +151,7 @@ func (c *Config) Validate() error {
 	if c.GitHub.Token == "" {
 		return fmt.Errorf("GitHub token is required (set GITHUB_TOKEN environment variable or specify in config)")
 	}
-	
+
 	if len(c.GitHub.Organizations) == 0 && len(c.GitHub.PersonalRepos) == 0 {
 		return fmt.Errorf("at least one organization or personal repository must be specified")
 	}

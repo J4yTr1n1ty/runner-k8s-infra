@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"encoding/base64"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,14 +77,18 @@ type: Opaque
 data:
   access-token: {{ACCESS_TOKEN_B64}}`
 
-	tmpDir, err := ioutil.TempDir("", "deployment-test")
+	tmpDir, err := os.MkdirTemp("", "deployment-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	templatePath := filepath.Join(tmpDir, "template.yaml")
-	if err := ioutil.WriteFile(templatePath, []byte(template), 0644); err != nil {
+	if err := os.WriteFile(templatePath, []byte(template), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,15 +219,15 @@ func TestUpdateDeploymentReplicasNoChange(t *testing.T) {
 
 func TestCreateOrUpdateDeployment(t *testing.T) {
 	tests := []struct {
-		name              string
+		name               string
 		existingDeployment *appsv1.Deployment
-		config            *DeploymentConfig
-		expectCreate      bool
-		expectUpdate      bool
+		config             *DeploymentConfig
+		expectCreate       bool
+		expectUpdate       bool
 	}{
 		{
-			name:   "create new deployment",
-			config: &DeploymentConfig{OrgName: "neworg", GitHubToken: "token", Replicas: 1},
+			name:         "create new deployment",
+			config:       &DeploymentConfig{OrgName: "neworg", GitHubToken: "token", Replicas: 1},
 			expectCreate: true,
 		},
 		{
@@ -254,11 +257,15 @@ func TestCreateOrUpdateDeployment(t *testing.T) {
 
 			// Create a simple template for create tests
 			if tt.expectCreate {
-				tmpDir, err := ioutil.TempDir("", "deployment-test")
+				tmpDir, err := os.MkdirTemp("", "deployment-test")
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer os.RemoveAll(tmpDir)
+				defer func() {
+					if err := os.RemoveAll(tmpDir); err != nil {
+						t.Logf("Failed to remove temp dir: %v", err)
+					}
+				}()
 
 				template := `apiVersion: apps/v1
 kind: Deployment
@@ -280,7 +287,9 @@ spec:
           image: test:latest`
 
 				templatePath := filepath.Join(tmpDir, "template.yaml")
-				ioutil.WriteFile(templatePath, []byte(template), 0644)
+				if err := os.WriteFile(templatePath, []byte(template), 0644); err != nil {
+					t.Fatal(err)
+				}
 
 				manager := NewManager(client, "test-namespace", templatePath)
 
@@ -354,7 +363,7 @@ func TestDeleteDeployment(t *testing.T) {
 
 func TestTemplateSubstitution(t *testing.T) {
 	template := "org: {{ORG_NAME}}, token: {{ACCESS_TOKEN_B64}}"
-	
+
 	content := strings.ReplaceAll(template, "{{ORG_NAME}}", "testorg")
 	tokenB64 := base64.StdEncoding.EncodeToString([]byte("test-token"))
 	content = strings.ReplaceAll(content, "{{ACCESS_TOKEN_B64}}", tokenB64)

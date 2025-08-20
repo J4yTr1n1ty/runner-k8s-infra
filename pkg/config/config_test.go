@@ -1,7 +1,6 @@
 package config
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,21 +97,31 @@ github:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create temporary config file
-			tmpDir, err := ioutil.TempDir("", "config-test")
+			tmpDir, err := os.MkdirTemp("", "config-test")
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() {
+				if err := os.RemoveAll(tmpDir); err != nil {
+					t.Logf("Failed to remove temp dir: %v", err)
+				}
+			}()
 
 			configPath := filepath.Join(tmpDir, "config.yaml")
-			if err := ioutil.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
+			if err := os.WriteFile(configPath, []byte(tt.configYAML), 0644); err != nil {
 				t.Fatal(err)
 			}
 
 			// Set environment variables
 			for key, value := range tt.envVars {
-				os.Setenv(key, value)
-				defer os.Unsetenv(key)
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) {
+					if err := os.Unsetenv(k); err != nil {
+						t.Logf("Failed to unset env var %s: %v", k, err)
+					}
+				}(key)
 			}
 
 			// Load config
@@ -187,26 +196,45 @@ func TestConfigValidation(t *testing.T) {
 	}
 
 	// Create test template file
-	tmpDir, err := ioutil.TempDir("", "config-test")
+	tmpDir, err := os.MkdirTemp("", "config-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	testDataDir := filepath.Join(tmpDir, "testdata")
-	os.MkdirAll(testDataDir, 0755)
+	if err := os.MkdirAll(testDataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 	templatePath := filepath.Join(testDataDir, "valid-template.yaml")
-	ioutil.WriteFile(templatePath, []byte("test: template"), 0644)
+	if err := os.WriteFile(templatePath, []byte("test: template"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Change to temp directory so relative paths work
-	oldWd, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(oldWd)
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Logf("Failed to restore working directory: %v", err)
+		}
+	}()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set defaults
-			tt.config.setDefaults()
+			if err := tt.config.setDefaults(); err != nil {
+				t.Fatal(err)
+			}
 
 			err := tt.config.Validate()
 			if tt.wantErr && err == nil {

@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 )
 
 type Manager struct {
@@ -70,21 +70,21 @@ func (m *Manager) updateDeploymentReplicas(ctx context.Context, deploymentName s
 
 func (m *Manager) createDeploymentFromTemplate(ctx context.Context, config *DeploymentConfig) error {
 	// Read template file
-	templateContent, err := ioutil.ReadFile(m.templatePath)
+	templateContent, err := os.ReadFile(m.templatePath)
 	if err != nil {
 		return fmt.Errorf("failed to read template file: %w", err)
 	}
 
 	// Replace placeholders
 	content := strings.ReplaceAll(string(templateContent), "{{ORG_NAME}}", config.OrgName)
-	
+
 	// Base64 encode the token
 	tokenB64 := base64.StdEncoding.EncodeToString([]byte(config.GitHubToken))
 	content = strings.ReplaceAll(content, "{{ACCESS_TOKEN_B64}}", tokenB64)
 
 	// Parse YAML documents
 	docs := strings.Split(content, "---")
-	
+
 	for _, doc := range docs {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
@@ -108,10 +108,10 @@ func (m *Manager) createDeploymentFromTemplate(ctx context.Context, config *Depl
 			if err := yaml.Unmarshal([]byte(doc), &deployment); err != nil {
 				return fmt.Errorf("failed to unmarshal deployment: %w", err)
 			}
-			
+
 			// Set the desired replica count
 			deployment.Spec.Replicas = &config.Replicas
-			
+
 			// Create deployment
 			_, err = m.kubeClient.AppsV1().Deployments(m.namespace).Create(ctx, &deployment, metav1.CreateOptions{})
 			if err != nil {
@@ -124,7 +124,7 @@ func (m *Manager) createDeploymentFromTemplate(ctx context.Context, config *Depl
 			if err := yaml.Unmarshal([]byte(doc), &secret); err != nil {
 				return fmt.Errorf("failed to unmarshal secret: %w", err)
 			}
-			
+
 			// Create secret
 			_, err = m.kubeClient.CoreV1().Secrets(m.namespace).Create(ctx, &secret, metav1.CreateOptions{})
 			if err != nil {
