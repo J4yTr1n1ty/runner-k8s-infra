@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner-{{ORG_NAME}}
+  namespace: github-runners
+  labels:
+    app: github-runner
+    org: {{ORG_NAME}}
+    managed-by: runner-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-runner
+      org: {{ORG_NAME}}
+  template:
+    metadata:
+      labels:
+        app: github-runner
+        org: {{ORG_NAME}}
+    spec:
+      containers:
+        - name: github-runner
+          image: myoung34/github-runner:latest
+          env:
+            - name: RUNNER_NAME_PREFIX
+              value: "runner-{{ORG_NAME}}-"
+            - name: RUNNER_SCOPE
+              value: "org"
+            - name: ORG_NAME
+              value: "{{ORG_NAME}}"
+            - name: ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-runner-token-{{ORG_NAME}}
+                  key: access-token
+            - name: LABELS
+              value: "self-hosted,Linux,X64,k8s"
+          resources:
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+            - name: work-dir
+              mountPath: /home/runner/_work
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+        - name: work-dir
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-runner-token-{{ORG_NAME}}
+  namespace: github-runners
+  labels:
+    app: github-runner
+    org: {{ORG_NAME}}
+type: Opaque
+data:
+  access-token: {{ACCESS_TOKEN_B64}}
