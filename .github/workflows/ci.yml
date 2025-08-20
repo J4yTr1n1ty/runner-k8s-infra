@@ -80,8 +80,8 @@ jobs:
 
     - name: Basic security check
       run: |
-        # Simple security check for common issues
-        if grep -r "password\|secret\|token" --include="*.go" . | grep -v "test" | grep -v "// " | grep -v "TOKEN"; then
+        # Simple security check for hardcoded secrets (looking for actual values, not variable names)
+        if grep -r -E "(password|secret|token)\s*[:=]\s*[\"'][^\"']{8,}[\"']" --include="*.go" . | grep -v "test"; then
           echo "⚠️ Potential security issue: hardcoded secrets detected"
           exit 1
         fi
